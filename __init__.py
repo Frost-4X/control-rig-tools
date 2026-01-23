@@ -6,8 +6,8 @@ bl_info = {
     "name": "Control Rig Tools",
     "author": "Frost-4X",
     "version": (1, 0, 0),
-    "blender": (3, 0, 0),
-    "location": "View3D",
+    "blender": (3, 6, 0),
+    "location": "View3D > Sidebar > Rig Switch",
     "description": "A Blender add-on that provides utility helpers such as automatic IK-FK switches and more",
     "category": "Rigging",
 }
