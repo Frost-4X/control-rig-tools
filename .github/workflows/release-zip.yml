@@ -22,7 +22,6 @@ jobs:
                   zip -r release.zip . -x ".git/*" ".github/workflows/*" "release.zip"
 
             - name: Upload release asset
-              name: Upload release asset (curl)
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
