@@ -42,12 +42,15 @@ class CRL_OT_add_switch(bpy.types.Operator):
         "Create a new IK/FK switch property on CTRL_Settings. "
         "If in Pose Mode and pose bones are selected those bones will be assigned to the new switch (only metadata is added)."
     )
+    bl_options = {'REGISTER'}
 
     name: bpy.props.StringProperty(name="Switch Name")
 
     def execute(self, context):
         try:
             armature = switches.get_active_armature(context)
+            if not getattr(self, 'name', None) or not str(self.name).strip():
+                raise ValueError('Provide a non-empty switch name')
             switches.add_switch_property(armature, self.name)
             assigned = 0
             assigned_names = set()
@@ -78,6 +81,9 @@ class CRL_OT_add_switch(bpy.types.Operator):
         else:
             self.report({'INFO'}, f"Added switch '{self.name}'")
         return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
 
 
 class CRL_OT_assign_switch(bpy.types.Operator):
@@ -148,10 +154,13 @@ class CRL_OT_create_rig_switch(bpy.types.Operator):
     )
 
     name: bpy.props.StringProperty(name="Switch Name")
+    bl_options = {'REGISTER'}
 
     def execute(self, context):
         try:
             arm = switches.get_active_armature(context)
+            if not getattr(self, 'name', None) or not str(self.name).strip():
+                raise ValueError('Provide a non-empty switch name')
             switches.add_switch_property(arm, self.name)
             assigned = 0
             for pb in arm.pose.bones:
@@ -170,6 +179,9 @@ class CRL_OT_create_rig_switch(bpy.types.Operator):
             return {'CANCELLED'}
         self.report({'INFO'}, f"Created rig switch '{self.name}'; assigned {assigned} DEF_ bones")
         return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
 
 
 class CRL_OT_clean_rig(bpy.types.Operator):

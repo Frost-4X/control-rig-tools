@@ -156,28 +156,35 @@ def clean_rig(armature: bpy.types.Object) -> dict:
     """
     removed_constraints = 0
     removed_drivers = 0
-    for pose_bone in armature.pose.bones:
-        if not pose_bone.name.startswith("DEF_"):
-            continue
-        # find COPY_TRANSFORMS constraints created by this addon (name starts with CRS_)
-        to_remove = [c for c in pose_bone.constraints if c.type == "COPY_TRANSFORMS" and c.name.startswith("CRS_")]
-        for c in to_remove:
-            # remove drivers targeting this constraint.influence
-            if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
-                data_path = f'pose.bones["{pose_bone.name}"].constraints["{c.name}"].influence'
-                drivers = list(armature.animation_data.drivers)
-                for d in drivers:
-                    if getattr(d, 'data_path', None) == data_path:
-                        try:
-                            armature.animation_data.drivers.remove(d)
-                            removed_drivers += 1
-                        except Exception:
-                            pass
-            try:
-                pose_bone.constraints.remove(c)
-                removed_constraints += 1
-            except Exception:
-                pass
+    removed_pairs = []  # list of (pose_bone_name, constraint_name) removed
+
+    # Remove all COPY_TRANSFORMS constraints from all pose bones
+    for pose_bone in list(armature.pose.bones):
+        # copy list to avoid mutation issues
+        for c in list(pose_bone.constraints):
+            if c.type == "COPY_TRANSFORMS":
+                cname = c.name
+                try:
+                    pose_bone.constraints.remove(c)
+                    removed_constraints += 1
+                    removed_pairs.append((pose_bone.name, cname))
+                except Exception:
+                    pass
+
+    # Remove drivers that targeted removed constraint influences
+    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+        drivers = list(armature.animation_data.drivers)
+        for d in drivers:
+            dp = getattr(d, 'data_path', '') or ''
+            for pb_name, cname in removed_pairs:
+                expected = f'pose.bones["{pb_name}"].constraints["{cname}"].influence'
+                if dp == expected:
+                    try:
+                        armature.animation_data.drivers.remove(d)
+                        removed_drivers += 1
+                    except Exception:
+                        pass
+
     return {
         'constraints_removed': removed_constraints,
         'drivers_removed': removed_drivers,

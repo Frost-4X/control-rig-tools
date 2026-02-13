@@ -23,10 +23,33 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Determine release tag
+              id: prep_tag
+              run: |
+                  set -euo pipefail
+                  TAG_FROM_EVENT="${{ github.event.release.tag_name }}"
+                  INPUT_TAG="${{ github.event.inputs.tag }}"
+                  if [ -n "${TAG_FROM_EVENT:-}" ]; then
+                      TAG="${TAG_FROM_EVENT}"
+                  else
+                      TAG="${INPUT_TAG}"
+                  fi
+                  if [ -z "${TAG}" ]; then
+                      echo "Error: unable to determine tag. Provide a 'tag' when running manually." >&2
+                      exit 1
+                  fi
+                  echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
             - name: Create zip archive
               run: |
-                  rm -f release.zip || true
-                  zip -r release.zip . -x ".git/*" ".github/workflows/*" "release.zip"
+                  set -euo pipefail
+                  TAG=${{ steps.prep_tag.outputs.tag }}
+                  ZIP_NAME="control-rig-tools-${TAG}.zip"
+                  rm -f "${ZIP_NAME}" || true
+                  rm -rf "Control Rig Tools" || true
+                  mkdir -p "Control Rig Tools"
+                  rsync -a --exclude='.git' --exclude='.github/workflows' --exclude='release-*.zip' ./ "Control Rig Tools/"
+                  zip -r "${ZIP_NAME}" "Control Rig Tools"
 
             - name: Upload release asset
               env:
@@ -34,22 +57,15 @@ jobs:
                   # these are populated when the workflow is triggered by a release event
                   UPLOAD_URL_TEMPLATE: ${{ github.event.release.upload_url }}
                   RELEASE_TAG_FROM_EVENT: ${{ github.event.release.tag_name }}
-                  INPUT_TAG: ${{ github.event.inputs.tag }}
                   REPO: ${{ github.repository }}
               run: |
                   set -euo pipefail
-                  # Determine tag and upload URL depending on trigger
+                  TAG=${{ steps.prep_tag.outputs.tag }}
+                  # Determine upload URL: if triggered by release event use template, else lookup/create release
                   if [ -n "${RELEASE_TAG_FROM_EVENT:-}" ]; then
-                      TAG="${RELEASE_TAG_FROM_EVENT}"
                       UPLOAD_URL="${UPLOAD_URL_TEMPLATE%%\{*}"
                   else
-                      TAG="${INPUT_TAG}"
-                      if [ -z "${TAG}" ]; then
-                          echo "Error: manual run requires 'tag' input to be provided." >&2
-                          exit 1
-                      fi
                       API="https://api.github.com/repos/${REPO}"
-                      # try to find existing release by tag
                       echo "Looking up release for tag ${TAG}"
                       resp=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/releases/tags/${TAG}" || true)
                       upload_url=$(echo "$resp" | jq -r .upload_url 2>/dev/null || true)
@@ -65,8 +81,8 @@ jobs:
                       UPLOAD_URL="${upload_url%%\{*}"
                   fi
 
-                  ASSET_NAME="release-${TAG}.zip"
+                  ASSET_NAME="control-rig-tools-${TAG}.zip"
                   echo "Uploading ${ASSET_NAME} to ${UPLOAD_URL}"
                   curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
                       -H "Content-Type: application/zip" \
-                      --data-binary @release.zip "${UPLOAD_URL}?name=${ASSET_NAME}"
+                      --data-binary @"${ASSET_NAME}" "${UPLOAD_URL}?name=${ASSET_NAME}"
