@@ -59,12 +59,24 @@ def _add_copy_transforms(pose_bone: bpy.types.PoseBone, armature: bpy.types.Obje
         # find and return existing constraint
         for c in pose_bone.constraints:
             if c.type == "COPY_TRANSFORMS" and c.name == cname and getattr(c, "subtarget", "") == target_name:
+                # ensure constraint uses local space for both owner and target
+                try:
+                    c.owner_space = 'LOCAL'
+                    c.target_space = 'LOCAL'
+                except Exception:
+                    pass
                 return c
 
     c = pose_bone.constraints.new(type="COPY_TRANSFORMS")
     c.name = cname
     c.target = armature
     c.subtarget = target_name
+    # use local space rather than world space for consistent local transforms
+    try:
+        c.owner_space = 'LOCAL'
+        c.target_space = 'LOCAL'
+    except Exception:
+        pass
     return c
 
 
@@ -157,9 +169,13 @@ def clean_rig(armature: bpy.types.Object) -> dict:
     removed_constraints = 0
     removed_drivers = 0
     removed_pairs = []  # list of (pose_bone_name, constraint_name) removed
+    bones_processed = 0
 
-    # Remove all COPY_TRANSFORMS constraints from all pose bones
+    # Only process DEF_ bones (deform bones)
     for pose_bone in list(armature.pose.bones):
+        if not pose_bone.name.startswith("DEF_"):
+            continue
+        bones_processed += 1
         # copy list to avoid mutation issues
         for c in list(pose_bone.constraints):
             if c.type == "COPY_TRANSFORMS":
@@ -173,6 +189,7 @@ def clean_rig(armature: bpy.types.Object) -> dict:
 
     # Remove drivers that targeted removed constraint influences
     if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+        # iterate over a copy because we may remove items
         drivers = list(armature.animation_data.drivers)
         for d in drivers:
             dp = getattr(d, 'data_path', '') or ''
@@ -186,6 +203,7 @@ def clean_rig(armature: bpy.types.Object) -> dict:
                         pass
 
     return {
+        'bones_processed': bones_processed,
         'constraints_removed': removed_constraints,
         'drivers_removed': removed_drivers,
     }

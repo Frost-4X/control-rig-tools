@@ -18,6 +18,11 @@ def _proxy_value_update(self, context):
         control_settings = switches.get_control_settings_pose_bone(armature)
         # write back to the underlying custom property
         control_settings[self.switch_name] = float(self.value)
+        # tag the armature so dependency graph updates driver evaluations
+        try:
+            armature.update_tag()
+        except Exception:
+            pass
     except Exception:
         # ignore errors during UI updates
         pass
@@ -196,7 +201,7 @@ class CRL_OT_clean_rig(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Removed {result.get('constraints_removed',0)} constraints and {result.get('drivers_removed',0)} drivers")
+        self.report({'INFO'}, f"Processed {result.get('bones_processed')} bones. Removed {result.get('constraints_removed',0)} constraints and {result.get('drivers_removed',0)} drivers")
         return {'FINISHED'}
 
 
