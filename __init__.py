@@ -7,7 +7,7 @@ bl_info = {
     "author": "Frost-4X",
     "version": (1, 0, 0),
     "blender": (3, 6, 0),
-    "location": "View3D > Sidebar > Rig Switch",
+    "location": "View3D > Sidebar > Control Rig Tools",
     "description": "A Blender add-on that provides utility helpers such as automatic IK-FK switches and more",
     "category": "Rigging",
 }
@@ -15,12 +15,16 @@ bl_info = {
 
 def register():
     """Register the add-on"""
-    pass
+    from . import operators, ui
+    operators.register()
+    ui.register()
 
 
 def unregister():
     """Unregister the add-on"""
-    pass
+    from . import operators, ui
+    ui.unregister()
+    operators.unregister()
 
 
 if __name__ == "__main__":
