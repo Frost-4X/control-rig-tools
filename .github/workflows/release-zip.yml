@@ -3,6 +3,13 @@ name: Create release zip
 on:
     release:
         types: [published]
+    # allow manual runs from the Actions UI
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Release tag to upload to (if empty, will attempt to use event data)"
+                required: false
+                default: ""
 
 permissions:
     contents: write
@@ -24,12 +31,41 @@ jobs:
             - name: Upload release asset
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # these are populated when the workflow is triggered by a release event
+                  UPLOAD_URL_TEMPLATE: ${{ github.event.release.upload_url }}
+                  RELEASE_TAG_FROM_EVENT: ${{ github.event.release.tag_name }}
+                  INPUT_TAG: ${{ github.event.inputs.tag }}
+                  REPO: ${{ github.repository }}
               run: |
                   set -euo pipefail
-                  ASSET_NAME="release-${{ github.event.release.tag_name }}.zip"
-                  # upload_url has a template suffix like "...{?name,label}"; trim it
-                  UPLOAD_URL="${{ github.event.release.upload_url }}"
-                  UPLOAD_URL="${UPLOAD_URL%%\{*}"
+                  # Determine tag and upload URL depending on trigger
+                  if [ -n "${RELEASE_TAG_FROM_EVENT:-}" ]; then
+                      TAG="${RELEASE_TAG_FROM_EVENT}"
+                      UPLOAD_URL="${UPLOAD_URL_TEMPLATE%%\{*}"
+                  else
+                      TAG="${INPUT_TAG}"
+                      if [ -z "${TAG}" ]; then
+                          echo "Error: manual run requires 'tag' input to be provided." >&2
+                          exit 1
+                      fi
+                      API="https://api.github.com/repos/${REPO}"
+                      # try to find existing release by tag
+                      echo "Looking up release for tag ${TAG}"
+                      resp=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/releases/tags/${TAG}" || true)
+                      upload_url=$(echo "$resp" | jq -r .upload_url 2>/dev/null || true)
+                      if [ -z "${upload_url}" ] || [ "${upload_url}" = "null" ]; then
+                          echo "Release not found; creating release ${TAG}"
+                          create_resp=$(curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"prerelease\":false}" "${API}/releases")
+                          upload_url=$(echo "$create_resp" | jq -r .upload_url)
+                      fi
+                      if [ -z "${upload_url}" ] || [ "${upload_url}" = "null" ]; then
+                          echo "Failed to obtain upload_url for release ${TAG}" >&2
+                          exit 1
+                      fi
+                      UPLOAD_URL="${upload_url%%\{*}"
+                  fi
+
+                  ASSET_NAME="release-${TAG}.zip"
                   echo "Uploading ${ASSET_NAME} to ${UPLOAD_URL}"
                   curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
                       -H "Content-Type: application/zip" \
