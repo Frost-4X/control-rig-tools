@@ -247,6 +247,37 @@ def build_rebuild_switches(armature: bpy.types.Object) -> List[str]:
 
         created.append(pose_bone.name)
 
+        # Reorder constraints so switches with fewer bones are last (apply on top).
+        try:
+            # desired switch order: largest groups first, smallest last
+            desired_switch_order = sorted(switches_for_bone, key=lambda s: len(switch_to_bones.get(s, [])), reverse=True)
+            desired_constraint_names: List[str] = []
+            for sw in desired_switch_order:
+                if fk_pose_bone is not None:
+                    desired_constraint_names.append(f'CRS_FK_{sw}')
+                if mch_pose_bone is not None:
+                    desired_constraint_names.append(f'CRS_MCH_{sw}')
+
+            # move constraints into desired order where present
+            target_index = 0
+            for cname in desired_constraint_names:
+                # find current index of constraint with this name
+                cur_index = None
+                for i, c in enumerate(pose_bone.constraints):
+                    if getattr(c, 'name', '') == cname:
+                        cur_index = i
+                        break
+                if cur_index is None:
+                    continue
+                try:
+                    pose_bone.constraints.move(cur_index, target_index)
+                    target_index += 1
+                except Exception:
+                    # ignore move errors and continue
+                    pass
+        except Exception:
+            pass
+
     return created
 
 
@@ -396,7 +427,8 @@ def remove_triplet_from_switch(armature: bpy.types.Object, base_name: str, switc
         base = pb.name.rsplit("_", 1)[-1]
         if base != base_name:
             continue
-        if pb.get("control_rig_tools") != switch_name:
+        # support multiple switches per bone
+        if not bone_has_switch(pb, switch_name):
             continue
 
         bones_removed += 1
@@ -446,3 +478,37 @@ def remove_triplet_from_switch(armature: bpy.types.Object, base_name: str, switc
         'constraints_removed': constraints_removed,
         'drivers_removed': drivers_removed,
     }
+
+
+def set_switch_enabled(armature: bpy.types.Object, switch_name: str, enabled: bool) -> dict:
+    """Enable or disable constraints for a specific switch.
+
+    This will mute/unmute COPY_TRANSFORMS constraints whose names end with the
+    switch suffix (CRS_FK_<switch>, CRS_MCH_<switch>) on all DEF_ bones.
+
+    Returns counts: {'constraints_toggled': int}
+    """
+    toggled = 0
+    for pb in armature.pose.bones:
+        # only DEF_ bones are expected to have these constraints
+        if not pb.name.startswith('DEF_'):
+            continue
+        for c in pb.constraints:
+            try:
+                if c.type == 'COPY_TRANSFORMS' and c.name.endswith(f'_{switch_name}'):
+                    # mute constraint when disabled, unmute when enabled
+                    try:
+                        c.mute = not bool(enabled)
+                        toggled += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    try:
+        # hint dependency graph to update
+        armature.update_tag()
+    except Exception:
+        pass
+
+    return {'constraints_toggled': toggled}

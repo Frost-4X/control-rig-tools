@@ -28,6 +28,22 @@ def _proxy_value_update(self, context):
         pass
 
 
+def _proxy_enabled_update(self, context):
+    try:
+        armature = switches.get_active_armature(context)
+        # toggle constraints for this switch
+        try:
+            switches.set_switch_enabled(armature, self.switch_name, bool(self.enabled))
+        except Exception:
+            pass
+        try:
+            armature.update_tag()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 class CRL_SwitchProxy(bpy.types.PropertyGroup):
     switch_name: _props.StringProperty()
     value: _props.FloatProperty(
@@ -42,6 +58,12 @@ class CRL_SwitchProxy(bpy.types.PropertyGroup):
         name="expanded",
         description="Expand to show assigned bones",
         default=False,
+    )
+    enabled: _props.BoolProperty(
+        name="enabled",
+        description="Enable/disable this switch",
+        default=True,
+        update=_proxy_enabled_update,
     )
 
 
@@ -230,6 +252,36 @@ class CRL_OT_remove_triplet_from_switch(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CRL_OT_remove_selection_from_switch(bpy.types.Operator):
+    bl_idname = "crl.remove_selection_from_switch"
+    bl_label = "Remove Selected from Switch"
+    bl_description = "Remove selected bones (their triplets) from the named switch"
+
+    switch_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        try:
+            arm = switches.get_active_armature(context)
+            if context.mode != 'POSE':
+                raise ValueError('Enter Pose Mode and select pose bones to remove.')
+            selected = context.selected_pose_bones
+            if not selected:
+                raise ValueError('No pose bones selected.')
+            bases = set()
+            for pb in selected:
+                base = helpers.derive_base_name_from_last_underscore(pb.name)
+                bases.add(base)
+            removed_total = 0
+            for base in bases:
+                res = switches.remove_triplet_from_switch(arm, base, self.switch_name)
+                removed_total += res.get('bones_removed', 0)
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Removed {removed_total} bones (triplets) from switch '{self.switch_name}'")
+        return {'FINISHED'}
+
+
 class CRL_OT_clean_rig(bpy.types.Operator):
     bl_idname = "crl.clean_rig"
     bl_label = "Clean Rig"
@@ -279,6 +331,7 @@ classes = [
     CRL_OT_clean_rig,
     CRL_OT_clear_switch_properties,
     CRL_OT_remove_triplet_from_switch,
+    CRL_OT_remove_selection_from_switch,
 ]
 
 

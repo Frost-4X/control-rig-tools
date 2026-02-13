@@ -41,14 +41,37 @@ class ControlRigToolsPanel(bpy.types.Panel):
                 scene, name, control_settings.get(name, 0.0))
 
             if proxy is not None:
-                row.prop(proxy, 'expanded', text='')
+                # find proxy index in scene collection for context_toggle
+                proxy_idx = None
+                if hasattr(scene, 'crl_switch_proxies'):
+                    for i, p in enumerate(scene.crl_switch_proxies):
+                        if p is proxy or getattr(p, 'switch_name', None) == name:
+                            proxy_idx = i
+                            break
+
+                # checkbox to enable/disable this switch
+                row.prop(proxy, 'enabled', text='')
+
+                # expand/collapse triangle
+                if proxy_idx is not None:
+                    icon = 'TRIA_DOWN' if proxy.expanded else 'TRIA_RIGHT'
+                    t = row.operator('wm.context_toggle', text='', icon=icon)
+                    t.data_path = f'scene.crl_switch_proxies[{proxy_idx}].expanded'
+                else:
+                    # fallback to small toggle if we can't find index
+                    row.prop(proxy, 'expanded', text='')
+
+                # slider
                 row.prop(proxy, 'value', text=name, slider=True)
             else:
                 row.prop(control_settings,
                          f'["{name}"]', text=name, slider=True)
 
-            op = row.operator('crl.assign_switch', text='Assign')
-            op.switch_name = name
+            # small icon-only Assign and Remove buttons
+            a = row.operator('crl.assign_switch', text='', icon='ADD')
+            a.switch_name = name
+            r = row.operator('crl.remove_selection_from_switch', text='', icon='REMOVE')
+            r.switch_name = name
 
             # when expanded show triplets (grouped by base) with remove buttons
             if proxy is not None and getattr(proxy, 'expanded', False):
