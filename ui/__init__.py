@@ -35,12 +35,13 @@ class ControlRigToolsPanel(bpy.types.Panel):
 
         scene = context.scene
         for name in sorted(switches_dict.keys()):
+            # header row with proxy slider and assign button
             row = layout.row(align=True)
-            # ensure a proxy exists and is synced (helpers handles creation)
             proxy = helpers.ensure_proxy_for_switch(
                 scene, name, control_settings.get(name, 0.0))
 
             if proxy is not None:
+                row.prop(proxy, 'expanded', text='')
                 row.prop(proxy, 'value', text=name, slider=True)
             else:
                 row.prop(control_settings,
@@ -48,6 +49,31 @@ class ControlRigToolsPanel(bpy.types.Panel):
 
             op = row.operator('crl.assign_switch', text='Assign')
             op.switch_name = name
+
+            # when expanded show triplets (grouped by base) with remove buttons
+            if proxy is not None and getattr(proxy, 'expanded', False):
+                # collect triplets for this switch
+                triplets = {}
+                for pb in armature.pose.bones:
+                    # bone may belong to multiple switches (semicolon-separated)
+                    try:
+                        from ..core import switches as _switches
+                        if not _switches.bone_has_switch(pb, name):
+                            continue
+                    except Exception:
+                        if pb.get('control_rig_tools') != name:
+                            continue
+                    base = pb.name.rsplit('_', 1)[-1]
+                    triplets.setdefault(base, []).append(pb.name)
+
+                box = layout.box()
+                for base in sorted(triplets.keys()):
+                    r = box.row(align=True)
+                    # show only the shared base name (strip prefixes)
+                    r.label(text=base)
+                    rem = r.operator('crl.remove_triplet_from_switch', text='Remove')
+                    rem.switch_name = name
+                    rem.base_name = base
 
         layout.separator()
         layout.operator('crl.add_switch', text='Add Switch')

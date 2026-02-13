@@ -38,6 +38,11 @@ class CRL_SwitchProxy(bpy.types.PropertyGroup):
         step=1,
         update=_proxy_value_update,
     )
+    expanded: _props.BoolProperty(
+        name="expanded",
+        description="Expand to show assigned bones",
+        default=False,
+    )
 
 
 class CRL_OT_add_switch(bpy.types.Operator):
@@ -63,8 +68,13 @@ class CRL_OT_add_switch(bpy.types.Operator):
                 selected_pose_bones = context.selected_pose_bones
                 if selected_pose_bones:
                     for pose_bone in selected_pose_bones:
-                        # assign metadata only; do not build constraints here
-                        pose_bone["control_rig_tools"] = self.name
+                        # assign metadata only; allow multiple switches per bone
+                        _ = None
+                        try:
+                            switches._add_switch_to_bone(pose_bone, self.name)
+                        except Exception:
+                            # fallback to simple assignment
+                            pose_bone["control_rig_tools"] = self.name
                         assigned_names.add(pose_bone.name)
                     # for each selected bone also assign other bones that share the derived base name
                     for pb in armature.pose.bones:
@@ -72,7 +82,10 @@ class CRL_OT_add_switch(bpy.types.Operator):
                             base = helpers.derive_base_name_from_last_underscore(pb.name)
                             for sel in selected_pose_bones:
                                 if base == helpers.derive_base_name_from_last_underscore(sel.name):
-                                    pb["control_rig_tools"] = self.name
+                                    try:
+                                        _switches._add_switch_to_bone(pb, self.name)
+                                    except Exception:
+                                        pb["control_rig_tools"] = self.name
                                     assigned_names.add(pb.name)
             assigned = len(assigned_names)
             # ensure UI proxy exists and is in sync
@@ -114,13 +127,19 @@ class CRL_OT_assign_switch(bpy.types.Operator):
             assigned_names = set()
             for pose_bone in selected_pose_bones:
                 # assign the selected bone (metadata only)
-                pose_bone["control_rig_tools"] = self.switch_name
+                try:
+                    switches._add_switch_to_bone(pose_bone, self.switch_name)
+                except Exception:
+                    pose_bone["control_rig_tools"] = self.switch_name
                 assigned_names.add(pose_bone.name)
                 # derive base name using substring after last underscore and assign matching prefixed bones
                 base = helpers.derive_base_name_from_last_underscore(pose_bone.name)
                 for pb in armature.pose.bones:
                     if pb.name not in assigned_names and helpers.derive_base_name_from_last_underscore(pb.name) == base:
-                        pb["control_rig_tools"] = self.switch_name
+                        try:
+                            switches._add_switch_to_bone(pb, self.switch_name)
+                        except Exception:
+                            pb["control_rig_tools"] = self.switch_name
                         assigned_names.add(pb.name)
             # Note: do not build constraints here; building is a separate explicit action
             processed = 0
@@ -175,7 +194,10 @@ class CRL_OT_create_rig_switch(bpy.types.Operator):
                 fk = f'FK_{base}'
                 mch = f'MCH_{base}'
                 if fk in arm.pose.bones or mch in arm.pose.bones:
-                    pb['control_rig_tools'] = self.name
+                    try:
+                        switches._add_switch_to_bone(pb, self.name)
+                    except Exception:
+                        pb['control_rig_tools'] = self.name
                     assigned += 1
             # ensure UI proxy exists
             helpers.ensure_proxy_for_switch(context.scene, self.name, 0.0)
@@ -187,6 +209,25 @@ class CRL_OT_create_rig_switch(bpy.types.Operator):
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
+
+
+class CRL_OT_remove_triplet_from_switch(bpy.types.Operator):
+    bl_idname = "crl.remove_triplet_from_switch"
+    bl_label = "Remove Triplet from Switch"
+    bl_description = "Remove a set of bones (triplet) sharing a base name from the named switch"
+
+    switch_name: bpy.props.StringProperty()
+    base_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        try:
+            arm = switches.get_active_armature(context)
+            switches.remove_triplet_from_switch(arm, self.base_name, self.switch_name)
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Removed triplet '{self.base_name}' from switch '{self.switch_name}'")
+        return {'FINISHED'}
 
 
 class CRL_OT_clean_rig(bpy.types.Operator):
@@ -237,6 +278,7 @@ classes = [
     CRL_OT_create_rig_switch,
     CRL_OT_clean_rig,
     CRL_OT_clear_switch_properties,
+    CRL_OT_remove_triplet_from_switch,
 ]
 
 

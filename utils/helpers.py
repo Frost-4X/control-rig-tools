@@ -55,4 +55,10 @@ def ensure_proxy_for_switch(scene: bpy.types.Scene, switch_name: str, initial_va
         p.value = float(initial_value)
     except Exception:
         p.value = 0.0
+    # ensure expanded exists and default is False
+    try:
+        if not hasattr(p, 'expanded'):
+            p.expanded = False
+    except Exception:
+        pass
     return p

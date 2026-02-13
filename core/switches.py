@@ -54,6 +54,37 @@ def _ensure_constraint_unique(pose_bone: bpy.types.PoseBone, cname: str, target_
     return True
 
 
+def _parse_bone_switches(pose_bone: bpy.types.PoseBone) -> List[str]:
+    """Return list of switch names assigned to this pose bone.
+
+    Stored as a semicolon-separated string in the `control_rig_tools` custom property.
+    """
+    raw = pose_bone.get("control_rig_tools")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(";") if p.strip()]
+        return parts
+    # fallback: single value
+    return [str(raw)]
+
+
+def _add_switch_to_bone(pose_bone: bpy.types.PoseBone, switch_name: str) -> None:
+    """Add `switch_name` to the bone's `control_rig_tools` property (no duplicates)."""
+    existing = _parse_bone_switches(pose_bone)
+    if switch_name in existing:
+        return
+    existing.append(switch_name)
+    try:
+        pose_bone["control_rig_tools"] = ";".join(existing)
+    except Exception:
+        pass
+
+
+def bone_has_switch(pose_bone: bpy.types.PoseBone, switch_name: str) -> bool:
+    return switch_name in _parse_bone_switches(pose_bone)
+
+
 def _add_copy_transforms(pose_bone: bpy.types.PoseBone, armature: bpy.types.Object, target_name: str, cname: str) -> bpy.types.Constraint:
     if not _ensure_constraint_unique(pose_bone, cname, target_name):
         # find and return existing constraint
@@ -98,63 +129,121 @@ def _add_driver_for_constraint_influence(constraint: bpy.types.Constraint, armat
 def build_rebuild_switches(armature: bpy.types.Object) -> List[str]:
     created: List[str] = []
 
-    for pose_bone in armature.pose.bones:
-        switch = pose_bone.get("control_rig_tools")
-        if not switch:
+    # Build mapping of switches -> assigned DEF_ bones
+    switch_to_bones: Dict[str, List[str]] = {}
+    for pb in armature.pose.bones:
+        if not pb.name.startswith('DEF_'):
             continue
-        # Only apply to DEF_ bones
-        if not pose_bone.name.startswith("DEF_"):
+        switches = _parse_bone_switches(pb)
+        for s in switches:
+            switch_to_bones.setdefault(s, []).append(pb.name)
+
+    # compute switch sizes and order by fewest bones first (priority)
+    switch_order = sorted(switch_to_bones.keys(), key=lambda s: len(switch_to_bones.get(s, [])))
+
+    # For each DEF_ bone, build constraints/drivers for every switch that references it.
+    for pose_bone in armature.pose.bones:
+        if not pose_bone.name.startswith('DEF_'):
             continue
 
-        base_name = pose_bone.name[len("DEF_"):]
-        fk_name = f"FK_{base_name}"
-        mch_name = f"MCH_{base_name}"
+        base_name = pose_bone.name[len('DEF_'):]
+        fk_name = f'FK_{base_name}'
+        mch_name = f'MCH_{base_name}'
 
         fk_pose_bone = armature.pose.bones.get(fk_name)
         mch_pose_bone = armature.pose.bones.get(mch_name)
 
         if fk_pose_bone is None and mch_pose_bone is None:
-            # nothing to do for this deform bone
             continue
 
-        # Add FK constraint and driver
-        if fk_pose_bone is not None:
-            cname_fk = f"CRS_FK_{switch}"
-            c_fk = _add_copy_transforms(pose_bone, armature, fk_name, cname_fk)
-            # ensure driver exists and uses CTRL_Settings[switch]
-            try:
-                # remove existing drivers targeting this constraint/influence
-                if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
-                    data_path_fk = f'pose.bones["{pose_bone.name}"].constraints["{c_fk.name}"].influence'
-                    drivers = list(armature.animation_data.drivers)
-                    for d in drivers:
-                        if getattr(d, 'data_path', None) == data_path_fk:
-                            try:
-                                armature.animation_data.drivers.remove(d)
-                            except Exception:
-                                pass
-                _add_driver_for_constraint_influence(c_fk, armature, switch, invert=False)
-            except Exception:
-                pass
+        # determine switches that include this bone, ordered by priority (fewest bones first)
+        switches_for_bone = [s for s in switch_order if pose_bone.name in switch_to_bones.get(s, [])]
+        if not switches_for_bone:
+            continue
 
-        # Add MCH constraint and driver (inverted)
-        if mch_pose_bone is not None:
-            cname_mch = f"CRS_MCH_{switch}"
-            c_mch = _add_copy_transforms(
-                pose_bone, armature, mch_name, cname_mch)
-            try:
-                if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
-                    data_path_mch = f'pose.bones["{pose_bone.name}"].constraints["{c_mch.name}"].influence'
-                    drivers = list(armature.animation_data.drivers)
-                    for d in drivers:
-                        if getattr(d, 'data_path', None) == data_path_mch:
-                            try:
-                                armature.animation_data.drivers.remove(d)
-                            except Exception:
-                                pass
-                _add_driver_for_constraint_influence(c_mch, armature, switch, invert=True)
-            except Exception:
-                pass
+        # For each switch that contains this bone create a constraint+driver
+        for s in switches_for_bone:
+            # FK
+            if fk_pose_bone is not None:
+                cname_fk = f'CRS_FK_{s}'
+                c_fk = _add_copy_transforms(pose_bone, armature, fk_name, cname_fk)
+                try:
+                    # remove existing drivers targeting this constraint/influence
+                    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+                        data_path_fk = f'pose.bones["{pose_bone.name}"].constraints["{c_fk.name}"].influence'
+                        drivers = list(armature.animation_data.drivers)
+                        for d in drivers:
+                            if getattr(d, 'data_path', None) == data_path_fk:
+                                try:
+                                    armature.animation_data.drivers.remove(d)
+                                except Exception:
+                                    pass
+                    # create driver that respects priority among switches_for_bone
+                    fcurve = c_fk.driver_add('influence')
+                    driver = fcurve.driver
+                    driver.type = 'SCRIPTED'
+                    # build variables for each switch in switches_for_bone (ordered by priority)
+                    for idx, sw in enumerate(switches_for_bone):
+                        var = driver.variables.new()
+                        var.name = f'var{idx}'
+                        var.type = 'SINGLE_PROP'
+                        target = var.targets[0]
+                        target.id = armature
+                        target.data_path = f'pose.bones["CTRL_Settings"]["{sw}"]'
+                    # build expression: var0 if var0>0 else (var1 if var1>0 else ...)
+                    expr = ''
+                    for idx in range(len(switches_for_bone)):
+                        if idx == 0:
+                            expr = f'var0'
+                        else:
+                            # nest
+                            expr = f'var{idx} if (' + ' and '.join([f'var{j}==0' for j in range(idx)]) + f') else ({expr})'
+                    # the above builds nested selection where the smallest switch (var0) wins
+                    # we need the expression that yields this switch value only when all smaller switches are zero
+                    # wrap expression to select current switch's var or zero
+                    # find index of current switch in switches_for_bone
+                    idx_s = switches_for_bone.index(s)
+                    if idx_s == 0:
+                        final_expr = 'var0'
+                    else:
+                        final_expr = f'var{idx_s} if (' + ' and '.join([f'var{j}==0' for j in range(idx_s)]) + ') else 0'
+                    driver.expression = final_expr
+                except Exception:
+                    pass
+
+            # MCH (inverted)
+            if mch_pose_bone is not None:
+                cname_mch = f'CRS_MCH_{s}'
+                c_mch = _add_copy_transforms(pose_bone, armature, mch_name, cname_mch)
+                try:
+                    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+                        data_path_mch = f'pose.bones["{pose_bone.name}"].constraints["{c_mch.name}"].influence'
+                        drivers = list(armature.animation_data.drivers)
+                        for d in drivers:
+                            if getattr(d, 'data_path', None) == data_path_mch:
+                                try:
+                                    armature.animation_data.drivers.remove(d)
+                                except Exception:
+                                    pass
+                    # create driver variables and expression similar to FK then invert the result
+                    fcurve = c_mch.driver_add('influence')
+                    driver = fcurve.driver
+                    driver.type = 'SCRIPTED'
+                    for idx, sw in enumerate(switches_for_bone):
+                        var = driver.variables.new()
+                        var.name = f'var{idx}'
+                        var.type = 'SINGLE_PROP'
+                        target = var.targets[0]
+                        target.id = armature
+                        target.data_path = f'pose.bones["CTRL_Settings"]["{sw}"]'
+                    idx_s = switches_for_bone.index(s)
+                    if idx_s == 0:
+                        expr = 'var0'
+                    else:
+                        expr = f'var{idx_s} if (' + ' and '.join([f'var{j}==0' for j in range(idx_s)]) + ') else 0'
+                    driver.expression = f'1 - ({expr})'
+                except Exception:
+                    pass
 
         created.append(pose_bone.name)
 
@@ -237,4 +326,123 @@ def clear_switch_properties(armature: bpy.types.Object) -> dict:
     return {
         'switch_props_removed': removed_props,
         'bone_tags_removed': removed_tags,
+    }
+
+
+def remove_bone_from_switch(armature: bpy.types.Object, bone_name: str) -> dict:
+    """Remove a single bone from any switch assignment and clean its COPY_TRANSFORMS constraints/drivers.
+
+    Returns counts: {'bone': str, 'constraints_removed': int, 'drivers_removed': int}
+    """
+    pb = armature.pose.bones.get(bone_name)
+    if pb is None:
+        raise ValueError(f'Bone not found: {bone_name}')
+
+    # remove metadata tag if present
+    try:
+        if "control_rig_tools" in pb.keys():
+            del pb["control_rig_tools"]
+    except Exception:
+        pass
+
+    removed_constraints = 0
+    removed_pairs = []
+    for c in list(pb.constraints):
+        if c.type == "COPY_TRANSFORMS":
+            cname = c.name
+            try:
+                pb.constraints.remove(c)
+                removed_constraints += 1
+                removed_pairs.append((pb.name, cname))
+            except Exception:
+                pass
+
+    removed_drivers = 0
+    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+        drivers = list(armature.animation_data.drivers)
+        for d in drivers:
+            dp = getattr(d, 'data_path', '') or ''
+            for pb_name, cname in removed_pairs:
+                expected = f'pose.bones["{pb_name}"].constraints["{cname}"].influence'
+                if dp == expected:
+                    try:
+                        armature.animation_data.drivers.remove(d)
+                        removed_drivers += 1
+                    except Exception:
+                        pass
+
+    return {
+        'bone': bone_name,
+        'constraints_removed': removed_constraints,
+        'drivers_removed': removed_drivers,
+    }
+
+
+def remove_triplet_from_switch(armature: bpy.types.Object, base_name: str, switch_name: str) -> dict:
+    """Remove all bones that share `base_name` (triplet) from the given switch.
+
+    Only bones that are tagged with the provided `switch_name` will be unassigned.
+    Cleans COPY_TRANSFORMS constraints and related drivers on those bones.
+
+    Returns counts: {'base': str, 'bones_removed': int, 'constraints_removed': int, 'drivers_removed': int}
+    """
+    bones_removed = 0
+    constraints_removed = 0
+    drivers_removed = 0
+    removed_pairs = []
+
+    # find bones matching base and switch tag
+    for pb in list(armature.pose.bones):
+        base = pb.name.rsplit("_", 1)[-1]
+        if base != base_name:
+            continue
+        if pb.get("control_rig_tools") != switch_name:
+            continue
+
+        bones_removed += 1
+        # remove only this switch from the bone's tag
+        try:
+            existing = _parse_bone_switches(pb)
+            if switch_name in existing:
+                existing.remove(switch_name)
+                if existing:
+                    pb["control_rig_tools"] = ";".join(existing)
+                else:
+                    try:
+                        del pb["control_rig_tools"]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # remove constraints that were created for this specific switch (CRS_FK_{switch} / CRS_MCH_{switch})
+        for c in list(pb.constraints):
+            if c.type == "COPY_TRANSFORMS" and c.name.endswith(f'_{switch_name}'):
+                cname = c.name
+                try:
+                    pb.constraints.remove(c)
+                    constraints_removed += 1
+                    removed_pairs.append((pb.name, cname))
+                except Exception:
+                    pass
+
+    # remove drivers targeting removed constraints
+    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+        drivers = list(armature.animation_data.drivers)
+        for d in drivers:
+            dp = getattr(d, 'data_path', '') or ''
+            for pb_name, cname in removed_pairs:
+                expected = f'pose.bones["{pb_name}"].constraints["{cname}"].influence'
+                if dp == expected:
+                    try:
+                        armature.animation_data.drivers.remove(d)
+                        drivers_removed += 1
+                    except Exception:
+                        pass
+
+    return {
+        'base': base_name,
+        'bones_removed': bones_removed,
+        'constraints_removed': constraints_removed,
+        'drivers_removed': drivers_removed,
     }

@@ -5,7 +5,7 @@ Control Rig Tools - A Blender add-on for rigging utilities
 bl_info = {
     "name": "Control Rig Tools",
     "author": "Frost-4X",
-    "version": (0, 1, 1),
+    "version": (0, 2, 0),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar > Control Rig Tools",
     "description": "A Blender add-on that provides utility helpers such as automatic IK-FK switches and more",
