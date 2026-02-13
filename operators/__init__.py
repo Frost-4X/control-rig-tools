@@ -282,6 +282,36 @@ class CRL_OT_remove_selection_from_switch(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CRL_OT_delete_switch(bpy.types.Operator):
+    bl_idname = "crl.delete_switch"
+    bl_label = "Delete Switch"
+    bl_description = "Delete the named switch and clear per-bone metadata (does not remove constraints/drivers)"
+
+    switch_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        try:
+            arm = switches.get_active_armature(context)
+            res = switches.delete_switch(arm, self.switch_name)
+            # remove proxy from scene if present
+            try:
+                if hasattr(context.scene, 'crl_switch_proxies'):
+                    coll = getattr(context.scene, 'crl_switch_proxies')
+                    for i in range(len(coll)-1, -1, -1):
+                        try:
+                            if getattr(coll[i], 'switch_name', None) == self.switch_name:
+                                coll.remove(i)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Deleted switch '{self.switch_name}'; cleared {res.get('bones_cleared',0)} bones")
+        return {'FINISHED'}
+
+
 class CRL_OT_clean_rig(bpy.types.Operator):
     bl_idname = "crl.clean_rig"
     bl_label = "Clean Rig"
@@ -332,6 +362,7 @@ classes = [
     CRL_OT_clear_switch_properties,
     CRL_OT_remove_triplet_from_switch,
     CRL_OT_remove_selection_from_switch,
+    CRL_OT_delete_switch,
 ]
 
 

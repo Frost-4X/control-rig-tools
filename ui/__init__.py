@@ -72,6 +72,9 @@ class ControlRigToolsPanel(bpy.types.Panel):
             a.switch_name = name
             r = row.operator('crl.remove_selection_from_switch', text='', icon='REMOVE')
             r.switch_name = name
+            # delete switch (clear metadata and remove proxy)
+            d = row.operator('crl.delete_switch', text='', icon='PANEL_CLOSE')
+            d.switch_name = name
 
             # when expanded show triplets (grouped by base) with remove buttons
             if proxy is not None and getattr(proxy, 'expanded', False):
@@ -94,9 +97,6 @@ class ControlRigToolsPanel(bpy.types.Panel):
                     r = box.row(align=True)
                     # show only the shared base name (strip prefixes)
                     r.label(text=base)
-                    rem = r.operator('crl.remove_triplet_from_switch', text='Remove')
-                    rem.switch_name = name
-                    rem.base_name = base
 
         layout.separator()
         layout.operator('crl.add_switch', text='Add Switch')

@@ -512,3 +512,79 @@ def set_switch_enabled(armature: bpy.types.Object, switch_name: str, enabled: bo
         pass
 
     return {'constraints_toggled': toggled}
+
+
+def delete_switch(armature: bpy.types.Object, switch_name: str) -> dict:
+    """Delete a switch property and clear its assignment metadata from bones.
+
+    Does NOT remove constraints/drivers; user is expected to run rebuild/clean after.
+
+    Returns counts: {'prop_removed': bool, 'bones_cleared': int}
+    """
+    control_settings = get_control_settings_pose_bone(armature)
+    prop_removed = False
+    try:
+        if switch_name in control_settings.keys():
+            del control_settings[switch_name]
+            prop_removed = True
+    except Exception:
+        pass
+
+    bones_cleared = 0
+    removed_pairs = []
+    constraints_removed = 0
+    drivers_removed = 0
+
+    for pb in armature.pose.bones:
+        try:
+            if bone_has_switch(pb, switch_name):
+                existing = _parse_bone_switches(pb)
+                if switch_name in existing:
+                    existing.remove(switch_name)
+                    if existing:
+                        pb["control_rig_tools"] = ";".join(existing)
+                    else:
+                        try:
+                            del pb["control_rig_tools"]
+                        except Exception:
+                            pass
+                    bones_cleared += 1
+        except Exception:
+            pass
+
+        # remove constraints that were created for this specific switch (CRS_FK_{switch} / CRS_MCH_{switch})
+        for c in list(pb.constraints):
+            if c.type == "COPY_TRANSFORMS" and c.name.endswith(f'_{switch_name}'):
+                cname = c.name
+                try:
+                    pb.constraints.remove(c)
+                    constraints_removed += 1
+                    removed_pairs.append((pb.name, cname))
+                except Exception:
+                    pass
+
+    # remove drivers targeting removed constraints
+    if getattr(armature, 'animation_data', None) is not None and armature.animation_data is not None:
+        drivers = list(armature.animation_data.drivers)
+        for d in drivers:
+            dp = getattr(d, 'data_path', '') or ''
+            for pb_name, cname in removed_pairs:
+                expected = f'pose.bones["{pb_name}"].constraints["{cname}"].influence'
+                if dp == expected:
+                    try:
+                        armature.animation_data.drivers.remove(d)
+                        drivers_removed += 1
+                    except Exception:
+                        pass
+
+    try:
+        armature.update_tag()
+    except Exception:
+        pass
+
+    return {
+        'prop_removed': prop_removed,
+        'bones_cleared': bones_cleared,
+        'constraints_removed': constraints_removed,
+        'drivers_removed': drivers_removed,
+    }
